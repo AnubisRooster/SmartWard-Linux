@@ -9,8 +9,7 @@ packages:
   SmartWardKit:
     path: Packages/SmartWardKit
   OnDeviceKit:
-    url: https://github.com/AnubisRooster/OnDeviceKit
-    branch: main
+    path: Packages/OnDeviceKit
 
 settings:
   base:

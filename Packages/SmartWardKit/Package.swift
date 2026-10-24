@@ -60,7 +60,7 @@ let package = Package(
         .library(name: "ShareInbox", targets: ["ShareInbox"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/AnubisRooster/OnDeviceKit", branch: "linux-support"),
+        .package(path: "../OnDeviceKit"),
         // HTML parsing for article extraction (MIT).
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.7.0"),
     ] + linuxSwiftDataPackages,

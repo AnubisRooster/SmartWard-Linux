@@ -1,0 +1,589 @@
+import Foundation
+import Speech
+import AVFoundation
+import SwiftUI
+
+/// Drives a hands-free, back-and-forth voice conversation:
+///
+///   listening → (natural pause) → thinking → speaking → listening → …
+///
+/// The mic is captured with `AVAudioEngine` and transcribed by
+/// `SFSpeechRecognizer` (on-device when the device supports it). A turn ends
+/// when the transcript stops changing for `config.silenceInterval` seconds —
+/// that is the "natural pause" endpointing. The finalized utterance is handed
+/// to the view layer via `pendingUtterance`; call `deliverResponse(_:)` with
+/// the reply to speak, and when speech finishes the loop resumes listening
+/// automatically.
+///
+/// While the assistant is speaking, the mic is fully torn down so the app
+/// never transcribes its own voice.
+@MainActor
+public final class VoiceConversationController: NSObject, ObservableObject {
+
+    public enum Phase: Equatable {
+        case idle
+        case listening
+        case thinking
+        case speaking
+    }
+
+    /// A finalized spoken turn. The unique `id` guarantees `onChange` fires even
+    /// when two consecutive utterances have identical text.
+    public struct VoiceUtterance: Equatable {
+        public let id = UUID()
+        public let text: String
+    }
+
+    @Published public private(set) var phase: Phase = .idle
+    @Published public var partialText = ""
+    @Published public var errorMessage: String?
+
+    /// A captured turn waiting to be processed by the view layer. The view
+    /// observes this, runs its own reply pipeline, then calls
+    /// `deliverResponse(_:)` with the reply to speak.
+    @Published public private(set) var pendingUtterance: VoiceUtterance?
+
+    /// Whether the conversation loop is engaged. Driven by `running` so the UI
+    /// reflects "on" immediately, even during the brief thinking/speaking phases.
+    @Published public private(set) var isActive = false
+
+    /// Tunable knobs (silence timeout, TTS rate/pitch/voice). The host app
+    /// resolves these from its own settings/storage and assigns them here;
+    /// changes take effect on the next turn.
+    public var config: VoiceLoopConfig
+
+    private let minCharacters = 2   // ignore stray blips
+
+    /// True from the moment the user enables voice mode until they disable it.
+    /// Guards the loop so async callbacks don't restart a stopped session.
+    private var running = false
+
+    /// Prevents overlapping/re-entrant calls into beginListening().
+    private var isConfiguring = false
+
+    /// Consecutive immediate recognition failures. Capped so a recognizer that
+    /// keeps erroring (e.g. no network, on-device model unavailable) can never
+    /// spin the main thread into a freeze.
+    private var consecutiveFailures = 0
+    private let maxConsecutiveFailures = 3
+
+    /// Right after the mic permission is granted the input node can report a
+    /// zero sample-rate for a moment. Retry a few times before giving up.
+    private var micNotReadyRetries = 0
+    private let maxMicNotReadyRetries = 5
+
+    /// Set true once the recognizer has produced at least one usable transcript,
+    /// so we know on-device recognition actually works on this device.
+    private var allowOnDevice = true
+
+    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    /// Recreated on every listen so its input node materializes against the
+    /// already-active recording session. Reusing one engine caches a 0 Hz input
+    /// format (AURemoteIO -10851) when the node is first touched before the
+    /// session is configured.
+    private var audioEngine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var silenceTimer: Timer?
+    /// The pending return to listening after a reply, so a finished reply
+    /// and a Skip tap (or two taps) schedule it only once.
+    private var resumeTask: Task<Void, Never>?
+    private var lastTranscript = ""
+
+    /// Bumped every time a new recognition task is created. A cancelled
+    /// SFSpeechRecognitionTask can still deliver one trailing callback after
+    /// `cancel()`; callbacks carrying a stale generation are ignored so a
+    /// superseded task can't trigger a redundant restart.
+    private var recognitionGeneration = 0
+
+    /// Finalized text from earlier recognition segments in the CURRENT turn.
+    /// SFSpeechRecognizer terminates a recognition request after ~1 minute, so a
+    /// long monologue is captured as several segments stitched together here.
+    private var committedText = ""
+
+    /// The raw recognizer `formattedString` from the most recent callback in the
+    /// current request. On-device recognition can roll its live transcription
+    /// over to a brand-new utterance mid-request (replacing the string with just
+    /// the newest sentence) WITHOUT sending `isFinal`. Tracking the previous raw
+    /// segment lets us detect that rollover and commit the prior sentence so the
+    /// running transcript keeps every sentence instead of only the latest one.
+    private var lastSegment = ""
+
+    private let speech: SpeechService
+
+    public init(speech: SpeechService = .shared, config: VoiceLoopConfig = VoiceLoopConfig()) {
+        self.speech = speech
+        self.config = config
+    }
+
+    /// Joins committed text from prior segments with the live segment. Pure and
+    /// static so it can be unit-tested without audio hardware.
+    public static func combinedTranscript(committed: String, segment: String) -> String {
+        if committed.isEmpty { return segment }
+        if segment.isEmpty { return committed }
+        return committed + " " + segment
+    }
+
+    /// Whether `current` is a refinement/extension of `previous` (the recognizer
+    /// is still updating the SAME utterance) versus a rollover to a new utterance.
+    ///
+    /// Refinements and extensions keep the same opening (the recognizer revises
+    /// or appends words), so the two strings share a long common prefix. A
+    /// rollover replaces the text with an unrelated new sentence, so they share
+    /// little or nothing at the start. We compare the longest common prefix to
+    /// the shorter string's length rather than using raw length (a rollover can
+    /// be longer OR shorter than what it replaced). Pure/static for testing.
+    public static func isContinuation(of previous: String, by current: String) -> Bool {
+        let prev = previous.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cur  = current.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if prev.isEmpty || cur.isEmpty { return true }
+        let common = zip(prev, cur).prefix(while: { $0.0 == $0.1 }).count
+        let minLen = min(prev.count, cur.count)
+        // Same utterance when they share at least half of the shorter string's
+        // opening (and at least a few characters, to ignore incidental matches).
+        return common >= max(3, minLen / 2)
+    }
+
+    /// Spoken phrases that mean "send what I've said so far".
+    private static let sendCommands = [
+        "send message", "send the message", "send it now", "send it",
+        "send now", "send",
+    ]
+
+    /// Detects a trailing "send" voice command.
+    /// - Returns: `nil` if no command; `""` if the command was the only thing
+    ///   said (nothing to send); otherwise the message with the command stripped.
+    /// Pure and static for unit testing.
+    public static func detectSendCommand(in text: String) -> String? {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = trimmed.last, last.isPunctuation { trimmed.removeLast() }
+        let lower = trimmed.lowercased()
+
+        for cmd in sendCommands {
+            if lower == cmd { return "" }
+            let suffix = " " + cmd
+            if lower.hasSuffix(suffix) {
+                let end = trimmed.index(trimmed.endIndex, offsetBy: -suffix.count)
+                var msg = String(trimmed[..<end])
+                while let last = msg.last, last.isWhitespace || last.isPunctuation { msg.removeLast() }
+                return msg
+            }
+        }
+        return nil
+    }
+
+    static let onDeviceUnavailableMessage =
+        "On-device speech recognition isn't available right now, and this conversation's audio has to stay on this device."
+
+    /// Whether repeated recognition failures should drop the on-device
+    /// requirement and let the system fall back to server recognition.
+    /// Never when the config requires on-device recognition. Pure and static
+    /// for unit testing.
+    public static func dropsOnDeviceRequirement(afterFailures failures: Int, config: VoiceLoopConfig) -> Bool {
+        !config.requiresOnDeviceRecognition && failures >= 2
+    }
+
+    // MARK: - Public control
+
+    /// Requests permissions and starts the conversation loop.
+    public func start() {
+        guard !running else { return }
+        errorMessage = nil
+
+        guard let recognizer, recognizer.isAvailable else {
+            errorMessage = "Speech recognition isn't available on this device right now."
+            return
+        }
+        guard !config.requiresOnDeviceRecognition || recognizer.supportsOnDeviceRecognition else {
+            errorMessage = Self.onDeviceUnavailableMessage
+            return
+        }
+        // Each session gets a fresh chance at on-device recognition, even if
+        // an earlier session fell back to server recognition.
+        allowOnDevice = true
+
+        requestAuthorization { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                self.errorMessage = "Microphone and speech permissions are required for voice mode. Enable them in Settings."
+                return
+            }
+            self.running = true
+            self.isActive = true
+            self.consecutiveFailures = 0
+            self.beginListening()
+        }
+    }
+
+    /// Stops everything and returns to idle.
+    public func stop() {
+        running = false
+        isActive = false
+        isConfiguring = false
+        consecutiveFailures = 0
+        micNotReadyRetries = 0
+        pendingUtterance = nil
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+        resumeTask?.cancel()
+        resumeTask = nil
+        teardownAudio()
+        speech.stop()
+        partialText = ""
+        lastTranscript = ""
+        committedText = ""
+        lastSegment = ""
+        phase = .idle
+        deactivateSession()
+    }
+
+    // MARK: - Authorization
+
+    private func requestAuthorization(_ completion: @escaping (Bool) -> Void) {
+        SFSpeechRecognizer.requestAuthorization { speechStatus in
+            let speechOK = (speechStatus == .authorized)
+            AVAudioApplication.requestRecordPermission { micOK in
+                Task { @MainActor in completion(speechOK && micOK) }
+            }
+        }
+    }
+
+    // MARK: - Listening
+
+    /// - Parameter continuing: when `true` this is a segment restart mid-turn
+    ///   (SFSpeechRecognizer's ~1-minute cap was hit while the user was still
+    ///   speaking).  The audio engine and its tap stay running — only the
+    ///   recognition request is replaced — so there is no audio gap and no
+    ///   zero-byte tap callbacks.  When `false` the full engine is (re)created.
+    private func beginListening(continuing: Bool = false) {
+        guard running else { return }
+        guard !isConfiguring else { return }
+        isConfiguring = true
+        defer { isConfiguring = false }
+
+        guard let recognizer, recognizer.isAvailable else {
+            errorMessage = "Speech recognition isn't available right now."
+            stop()
+            return
+        }
+
+        if continuing {
+            // ── Segment restart ──────────────────────────────────────────────
+            // Keep the engine and its tap alive; just swap the recognition
+            // request.  This avoids any audio gap and prevents the
+            // mBuffers[0].mDataByteSize == 0 warnings caused by tearing down
+            // and recreating the engine while the mic is hot.
+            task?.cancel()
+            task = nil
+            request?.endAudio()
+            request = nil
+        } else {
+            // ── Fresh start ──────────────────────────────────────────────────
+            partialText = ""
+            lastTranscript = ""
+            committedText = ""
+            teardownAudio()   // stop any prior engine / task
+
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playAndRecord, mode: .default,
+                                        options: [.defaultToSpeaker, .allowBluetooth])
+                // Hint a hardware rate so the input route settles on the first
+                // activation (reduces transient AURemoteIO -10851 log).
+                try? session.setPreferredSampleRate(48_000)
+                try session.setActive(true, options: .notifyOthersOnDeactivation)
+
+                // Create a fresh engine AFTER the session is active so its input
+                // node reads the real hardware format instead of a cached 0 Hz value.
+                audioEngine = AVAudioEngine()
+                let input = audioEngine.inputNode
+                let format = input.inputFormat(forBus: 0)
+
+                guard format.sampleRate > 0, format.channelCount > 0 else {
+                    if micNotReadyRetries < maxMicNotReadyRetries {
+                        micNotReadyRetries += 1
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(nanoseconds: 250_000_000)
+                            guard let self, self.running else { return }
+                            self.beginListening(continuing: false)
+                        }
+                    } else {
+                        micNotReadyRetries = 0
+                        errorMessage = "Microphone couldn't start. Make sure no other app is using it, then tap the mic again."
+                        stop()
+                    }
+                    return
+                }
+                micNotReadyRetries = 0
+                errorMessage = nil
+
+                input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+                    // Skip empty buffers that arrive as the audio pipeline warms
+                    // up — appending them causes AVAudioBuffer mDataByteSize == 0
+                    // warnings and can confuse the recognizer.
+                    guard let pcm = buffer as? AVAudioPCMBuffer,
+                          pcm.frameLength > 0 else { return }
+                    self?.request?.append(pcm)
+                }
+
+                audioEngine.prepare()
+                try audioEngine.start()
+            } catch {
+                errorMessage = "Could not start listening: \(error.localizedDescription)"
+                stop()
+                return
+            }
+        }
+
+        // ── Start a new recognition request (shared by both paths) ───────────
+        // The new request's formattedString starts fresh, so forget the previous
+        // request's raw segment — otherwise the first short partial would look
+        // like a rollover and re-commit text already captured.
+        lastSegment = ""
+
+        if config.requiresOnDeviceRecognition && !recognizer.supportsOnDeviceRecognition {
+            errorMessage = Self.onDeviceUnavailableMessage
+            stop()
+            return
+        }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        if allowOnDevice && recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        }
+        self.request = request
+        phase = .listening
+
+        recognitionGeneration += 1
+        let generation = recognitionGeneration
+        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            guard let self else { return }
+            Task { @MainActor in
+                // Ignore trailing callbacks from a task we've already replaced.
+                guard generation == self.recognitionGeneration else { return }
+                var wasFinal = false
+                if let result {
+                    wasFinal = result.isFinal
+                    self.handleTranscript(result.bestTranscription.formattedString,
+                                          isFinal: result.isFinal)
+                }
+                // If isFinal was true, handleTranscript already scheduled a
+                // restart — don't also call handleSegmentEnd or we get a
+                // double-restart that creates an audio gap mid-monologue.
+                if error != nil, !wasFinal {
+                    self.handleSegmentEnd(hadResult: result != nil)
+                }
+            }
+        }
+    }
+
+    private func handleTranscript(_ segment: String, isFinal: Bool) {
+        guard running, phase == .listening else { return }
+
+        // Detect the recognizer rolling over to a new utterance mid-request: the
+        // live string stopped extending the previous one, so commit the prior
+        // segment before it's lost. This keeps multi-sentence turns intact even
+        // when the recognizer resets formattedString without an isFinal.
+        if !lastSegment.isEmpty,
+           !segment.isEmpty,
+           !Self.isContinuation(of: lastSegment, by: segment) {
+            committedText = Self.combinedTranscript(committed: committedText, segment: lastSegment)
+        }
+        lastSegment = segment
+
+        let full = Self.combinedTranscript(committed: committedText, segment: segment)
+
+        // "…send" voice command → finalize and send immediately.
+        if let stripped = Self.detectSendCommand(in: full) {
+            consecutiveFailures = 0
+            guard !stripped.isEmpty else {
+                // Only the word "send" was heard — nothing to send; keep listening.
+                lastTranscript = ""
+                committedText = ""
+                lastSegment = ""
+                partialText = ""
+                resetSilenceTimer()
+                return
+            }
+            lastTranscript = stripped
+            committedText = stripped
+            partialText = stripped
+            endpoint()
+            return
+        }
+
+        if !full.isEmpty, full != lastTranscript {
+            consecutiveFailures = 0       // recognizer is working
+            lastTranscript = full
+            partialText = full
+            resetSilenceTimer()
+        }
+
+        // A final result means the recognizer reached its OWN endpoint — either a
+        // natural pause or its ~1-minute cap. That is NOT the end of the user's
+        // turn: only `config.silenceInterval` of true trailing silence ends a turn.
+        if isFinal {
+            if !segment.isEmpty {
+                committedText = full
+                // The user just finished speaking a sentence; re-arm the silence
+                // timer so the pause-driven finalize + restart cycle never eats
+                // into the silence budget and cuts the turn off early.
+                resetSilenceTimer()
+            }
+            // ALWAYS restart so we keep listening for the rest of the turn (the
+            // recognizer won't accept more audio after a final result). The
+            // silence timer remains the sole arbiter of when the turn ends.
+            restartSegment()
+        }
+    }
+
+    /// A recognition segment ended (final or error). If we already have text for
+    /// this turn, keep the turn alive by restarting; otherwise treat it as a
+    /// genuine start failure with capped, delayed retries.
+    private func handleSegmentEnd(hadResult: Bool) {
+        guard running, phase == .listening else { return }
+        if lastTranscript.isEmpty && committedText.isEmpty {
+            handleRecognitionFailure()
+        } else {
+            committedText = lastTranscript
+            restartSegment()
+        }
+    }
+
+    /// Starts a new recognition segment for the current turn, preserving all
+    /// committed text.  The audio engine stays running — no gap, no empty
+    /// tap buffers — only the recognition request is replaced.
+    private func restartSegment() {
+        guard running, phase == .listening else { return }
+        beginListening(continuing: true)
+    }
+
+    private func resetSilenceTimer() {
+        silenceTimer?.invalidate()
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: config.silenceInterval,
+                                            repeats: false) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.endpoint() }
+        }
+    }
+
+    /// Handles an immediate recognizer error WITHOUT spinning the main thread.
+    /// Retries are delayed and capped; after the cap we stop with a message.
+    private func handleRecognitionFailure() {
+        teardownAudio()
+        guard running else { return }
+
+        consecutiveFailures += 1
+
+        // If on-device recognition keeps failing instantly, drop the on-device
+        // requirement and let the system fall back to server recognition —
+        // unless the config forbids audio leaving the device.
+        if Self.dropsOnDeviceRequirement(afterFailures: consecutiveFailures, config: config) {
+            allowOnDevice = false
+        }
+
+        guard consecutiveFailures <= maxConsecutiveFailures else {
+            errorMessage = "Voice recognition isn't responding. Tap the mic to try again, or type your message."
+            stop()
+            return
+        }
+
+        // Delayed retry breaks any tight error loop.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard let self, self.running, self.phase != .speaking, self.phase != .thinking else { return }
+            self.beginListening()
+        }
+    }
+
+    // MARK: - Endpointing → send → speak → resume
+
+    private func endpoint() {
+        guard running, phase == .listening else { return }
+        let utterance = lastTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Too short to be a real turn — keep listening.
+        guard utterance.count >= minCharacters else {
+            resetSilenceTimer()
+            return
+        }
+
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+        teardownAudio()
+
+        phase = .thinking
+        committedText = ""
+        lastSegment = ""
+        partialText = utterance
+
+        // Hand the turn to the view layer; it will call deliverResponse(_:).
+        pendingUtterance = VoiceUtterance(text: utterance)
+    }
+
+    /// Called by the view after it has processed the utterance and produced a
+    /// reply. Speaks the reply (then resumes listening), or resumes immediately
+    /// when there's nothing to say.
+    public func deliverResponse(_ text: String?) {
+        guard running, phase == .thinking else { return }
+        if let text, !text.isEmpty {
+            speakThenResume(text)
+        } else {
+            beginListening()
+        }
+    }
+
+    private func speakThenResume(_ text: String) {
+        phase = .speaking
+
+        speech.speak(
+            text,
+            rate:  config.ttsRate,
+            pitch: config.ttsPitch,
+            voiceID: config.voiceID,
+            onFinish: { [weak self] in
+                Task { @MainActor in self?.resumeListeningAfterPlayback() }
+            }
+        )
+    }
+
+    /// Returns to listening after a brief pause, so the audio session can
+    /// flip from playback back to record cleanly before the mic re-engages.
+    private func resumeListeningAfterPlayback() {
+        guard running, phase == .speaking, resumeTask == nil else { return }
+        resumeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.resumeTask = nil
+            guard self.running, self.phase == .speaking else { return }
+            self.beginListening()
+        }
+    }
+
+    /// Stops the current spoken reply and returns to listening. Used when the
+    /// user taps the speaker control mid-reply so the voice loop doesn't stall
+    /// in the `.speaking` phase (the dropped TTS `onFinish` never fires).
+    /// Listening resumes after the same pause as a finished reply, so the mic
+    /// doesn't open while the audio session is still switching from playback.
+    public func skipSpeaking() {
+        guard running, phase == .speaking else { return }
+        speech.stop()
+        resumeListeningAfterPlayback()
+    }
+
+    // MARK: - Teardown
+
+    private func teardownAudio() {
+        request?.endAudio()
+        task?.cancel()
+        request = nil
+        task = nil
+        if audioEngine.isRunning { audioEngine.stop() }
+        // removeTap is idempotent; safe to call even if no tap is installed.
+        audioEngine.inputNode.removeTap(onBus: 0)
+    }
+
+    private func deactivateSession() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+}

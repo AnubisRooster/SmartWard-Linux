@@ -1,5 +1,17 @@
 <img src="docs/images/app-icon.png" alt="SmartWard icon" width="96" height="96">
 
+> **Linux fork.** This is a Linux fork of [SmartWard](https://github.com/AnubisRooster/SmartWard): the same local-first research strategist, running on a Linux laptop with local models from [Ollama](https://ollama.com) instead of Apple Intelligence. It adds the `smartward` command-line tool (`add`, `sources`, `ingest`, `status`, `search`, `ask`, `digest`), a Linux `SwiftData` module backed by SQLite, and a Linux-ready copy of [OnDeviceKit](https://github.com/AnubisRooster/OnDeviceKit) under `Packages/OnDeviceKit`. The iOS app is kept and still builds from this tree.
+>
+> Quick start (Swift 6 toolchain, `libsqlite3-dev`, `pkg-config`, Ollama with `llama3.2:3b` and `nomic-embed-text`):
+>
+> ```bash
+> cd Packages/SmartWardKit
+> swift build --product smartward
+> .build/debug/smartward add rss https://huggingface.co/blog/feed.xml
+> .build/debug/smartward ingest
+> .build/debug/smartward search "speculative decoding"
+> ```
+
 # SmartWard
 
 A local-first iPhone research strategist. SmartWard reads the AI and software-development world for you, keeps an on-device knowledge graph that links what you read with what you've discussed, and brainstorms your projects with the LLMs you bring your own keys for.
