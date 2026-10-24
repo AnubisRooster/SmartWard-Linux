@@ -1,5 +1,20 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
+
+#if !canImport(os)
+/// Stand-in for `OSAllocatedUnfairLock` where `os` doesn't exist.
+final class SampleLock<State>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var state: State
+    init(initialState: State) { state = initialState }
+    func withLock<R>(_ body: (inout State) throws -> R) rethrows -> R {
+        lock.lock(); defer { lock.unlock() }
+        return try body(&state)
+    }
+}
+#endif
 
 /// Timing for the paths with latency targets (NFR-4): each measurement is a
 /// signpost interval (Instruments → Points of Interest) and is kept in a
@@ -19,25 +34,37 @@ public enum PerfTrace {
         public let max: Double
     }
 
+    #if canImport(os)
     static let signposter = OSSignposter(subsystem: "com.intelligentdesignsllc.smartward", category: .pointsOfInterest)
     private static let log = OSAllocatedUnfairLock(initialState: [Sample]())
+    #else
+    private static let log = SampleLock(initialState: [Sample]())
+    #endif
     static let capacity = 500
 
     public static func measure<T>(_ name: StaticString, _ work: () throws -> T) rethrows -> T {
+        #if canImport(os)
         let state = signposter.beginInterval(name)
+        #endif
         let start = DispatchTime.now()
         defer {
+            #if canImport(os)
             signposter.endInterval(name, state)
+            #endif
             record("\(name)", since: start)
         }
         return try work()
     }
 
     public static func measureAsync<T>(_ name: StaticString, _ work: () async throws -> T) async rethrows -> T {
+        #if canImport(os)
         let state = signposter.beginInterval(name)
+        #endif
         let start = DispatchTime.now()
         defer {
+            #if canImport(os)
             signposter.endInterval(name, state)
+            #endif
             record("\(name)", since: start)
         }
         return try await work()

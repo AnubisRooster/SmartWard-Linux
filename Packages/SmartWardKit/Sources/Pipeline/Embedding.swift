@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(NaturalLanguage)
 import NaturalLanguage
+#endif
 import RetrievalKit
 
 /// An embedder plus the identifier recorded on every chunk it embeds
@@ -16,12 +18,14 @@ public struct EmbeddingModel: Sendable {
 
     /// Apple's on-device English sentence embedding, or `nil` when the
     /// device has none. Nothing leaves the device.
+    #if canImport(NaturalLanguage)
     public static func appleSentence() -> EmbeddingModel? {
         let provider = NLEmbeddingProvider(language: .english)
         guard provider.dimension > 0 else { return nil }
         let revision = NLEmbedding.currentSentenceEmbeddingRevision(for: .english)
         return EmbeddingModel(id: "apple-nl-sentence-en-r\(revision)", provider: provider)
     }
+    #endif
 }
 
 /// Chunk vectors are stored as raw little-endian Float32 bytes (PLAN §5.2),

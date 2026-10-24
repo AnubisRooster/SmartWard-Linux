@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 
 /// A parsed RSS 2.0, RSS 1.0 (RDF) or Atom document, including arXiv's API
 /// responses and GitHub's `releases.atom`. Item text is still raw (often

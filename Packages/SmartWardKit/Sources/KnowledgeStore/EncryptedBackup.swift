@@ -1,14 +1,20 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
 import CommonCrypto
 import Security
+#else
+import Crypto
+#endif
 
 /// A passphrase-encrypted backup of the whole library (PLAN Phase 5).
 ///
 /// File layout: `SWBK` · format version (1 byte) · PBKDF2 iterations
 /// (UInt32, big-endian) · salt (16 bytes) · AES-GCM box (nonce, ciphertext,
 /// tag). The key comes from your passphrase through PBKDF2-HMAC-SHA256, the
-/// payload is the `LibraryArchive` JSON compressed with LZFSE, and the
+/// payload is the `LibraryArchive` JSON compressed with LZFSE (format 1; Linux
+/// has no LZFSE, so format 2 stores it uncompressed and every platform reads
+/// it), and the
 /// header is authenticated with it, so a tampered or truncated file fails to
 /// open rather than restoring something else. Nothing is stored that could
 /// open it without the passphrase.
@@ -19,7 +25,14 @@ public enum EncryptedBackup {
     public static let defaultIterations: UInt32 = 600_000
 
     static let magic = Data("SWBK".utf8)
-    static let formatVersion: UInt8 = 1
+    /// Newest format this build can read. Apple platforms write 1 (LZFSE),
+    /// Linux writes 2 (uncompressed).
+    static let formatVersion: UInt8 = 2
+    #if canImport(CryptoKit)
+    static let writtenVersion: UInt8 = 1
+    #else
+    static let writtenVersion: UInt8 = 2
+    #endif
     static let saltLength = 16
     static let headerLength = 4 + 1 + 4 + 16
 
@@ -28,6 +41,7 @@ public enum EncryptedBackup {
         case notABackup
         case newerVersion(Int)
         case wrongPassphraseOrDamaged
+        case unsupportedCompression
 
         public var errorDescription: String? {
             switch self {
@@ -39,6 +53,8 @@ public enum EncryptedBackup {
                 return "That backup was made by a newer SmartWard (format \(version)). Update the app to restore it."
             case .wrongPassphraseOrDamaged:
                 return "The passphrase is wrong, or the backup is damaged."
+            case .unsupportedCompression:
+                return "That backup was made on an Apple device and is compressed in a way this platform can't read. Make a new backup there with the latest version."
             }
         }
     }
@@ -49,13 +65,16 @@ public enum EncryptedBackup {
         guard passphrase.count >= minimumPassphraseLength else {
             throw BackupError.passphraseTooShort(minimum: minimumPassphraseLength)
         }
+        #if canImport(CryptoKit)
         let compressed = try (archive.encoded() as NSData).compressed(using: .lzfse) as Data
-        var salt = Data(count: saltLength)
-        let status = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, saltLength, $0.baseAddress!) }
-        guard status == errSecSuccess else { throw CocoaError(.fileWriteUnknown) }
+        #else
+        let compressed = try archive.encoded()
+        #endif
+        var generator = SystemRandomNumberGenerator()
+        let salt = Data((0..<saltLength).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
 
         var header = magic
-        header.append(formatVersion)
+        header.append(writtenVersion)
         withUnsafeBytes(of: iterations.bigEndian) { header.append(contentsOf: $0) }
         header.append(salt)
 
@@ -85,8 +104,18 @@ public enum EncryptedBackup {
         } catch {
             throw BackupError.wrongPassphraseOrDamaged
         }
-        guard let json = try? (compressed as NSData).decompressed(using: .lzfse) as Data else {
-            throw BackupError.wrongPassphraseOrDamaged
+        let json: Data
+        if version >= 2 {
+            json = compressed
+        } else {
+            #if canImport(CryptoKit)
+            guard let inflated = try? (compressed as NSData).decompressed(using: .lzfse) as Data else {
+                throw BackupError.wrongPassphraseOrDamaged
+            }
+            json = inflated
+            #else
+            throw BackupError.unsupportedCompression
+            #endif
         }
         return try LibraryArchive.decode(json)
     }
@@ -96,6 +125,7 @@ public enum EncryptedBackup {
     static func deriveKey(passphrase: String, salt: Data, iterations: UInt32) throws -> SymmetricKey {
         let password = Array(passphrase.precomposedStringWithCanonicalMapping.utf8)
         guard !password.isEmpty else { throw BackupError.wrongPassphraseOrDamaged }
+        #if canImport(CryptoKit)
         var derived = [UInt8](repeating: 0, count: 32)
         let status = salt.withUnsafeBytes { saltBytes in
             password.withUnsafeBufferPointer { passwordBytes in
@@ -109,5 +139,28 @@ public enum EncryptedBackup {
         }
         guard status == Int32(kCCSuccess) else { throw CocoaError(.fileReadUnknown) }
         return SymmetricKey(data: derived)
+        #else
+        return SymmetricKey(data: pbkdf2SHA256(password: password, salt: Array(salt), iterations: Int(iterations)))
+        #endif
     }
+
+    #if !canImport(CryptoKit)
+    /// PBKDF2-HMAC-SHA256 with a single 32-byte output block (RFC 8018).
+    static func pbkdf2SHA256(password: [UInt8], salt: [UInt8], iterations: Int) -> [UInt8] {
+        let prf = HMAC<SHA256>(key: SymmetricKey(data: password))
+        var first = prf
+        first.update(data: salt + [0, 0, 0, 1])
+        var u = Array(first.finalize())
+        var result = u
+        if iterations > 1 {
+            for _ in 2...iterations {
+                var mac = prf
+                mac.update(data: u)
+                u = Array(mac.finalize())
+                for i in 0..<result.count { result[i] ^= u[i] }
+            }
+        }
+        return result
+    }
+    #endif
 }

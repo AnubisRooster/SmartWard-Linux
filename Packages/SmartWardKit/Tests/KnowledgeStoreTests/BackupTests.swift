@@ -1,6 +1,10 @@
 import XCTest
 import SwiftData
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 @testable import KnowledgeStore
 
 final class BackupTests: XCTestCase {
@@ -100,8 +104,8 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(refusal(backup.prefix(40), passphrase), .wrongPassphraseOrDamaged, "truncated")
 
         var newer = backup
-        newer[4] = 2
-        XCTAssertEqual(refusal(newer, passphrase), .newerVersion(2))
+        newer[4] = EncryptedBackup.formatVersion + 1
+        XCTAssertEqual(refusal(newer, passphrase), .newerVersion(Int(EncryptedBackup.formatVersion) + 1))
         XCTAssertEqual(refusal(Data("PK\u{3}\u{4} not a backup at all".utf8), passphrase), .notABackup)
         var slow = backup
         for index in 5..<9 { slow[index] = 0xFF }

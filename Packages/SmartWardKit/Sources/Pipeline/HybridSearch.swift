@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Accelerate)
 import Accelerate
+#endif
 import SwiftData
 import RetrievalKit
 import KnowledgeStore
@@ -166,11 +168,19 @@ public struct HybridSearchIndex: Sendable {
 
     static func normalized(_ vector: [Float]) -> [Float]? {
         var sumOfSquares: Float = 0
+        #if canImport(Accelerate)
         vDSP_svesq(vector, 1, &sumOfSquares, vDSP_Length(vector.count))
+        #else
+        for x in vector { sumOfSquares += x * x }
+        #endif
         guard sumOfSquares > 0, sumOfSquares.isFinite else { return nil }
         var scale = 1 / sumOfSquares.squareRoot()
         var unit = [Float](repeating: 0, count: vector.count)
+        #if canImport(Accelerate)
         vDSP_vsmul(vector, 1, &scale, &unit, 1, vDSP_Length(vector.count))
+        #else
+        for i in 0..<vector.count { unit[i] = vector[i] * scale }
+        #endif
         return unit
     }
 
@@ -179,8 +189,21 @@ public struct HybridSearchIndex: Sendable {
     func semanticMatches(_ query: [Float], limit: Int) -> [(id: String, similarity: Float)] {
         guard !vectorIDs.isEmpty, query.count == dimension, let unit = Self.normalized(query) else { return [] }
         var similarities = [Float](repeating: 0, count: vectorIDs.count)
+        #if canImport(Accelerate)
         vDSP_mmul(matrix, 1, unit, 1, &similarities, 1,
                   vDSP_Length(vectorIDs.count), 1, vDSP_Length(dimension))
+        #else
+        matrix.withUnsafeBufferPointer { m in
+            unit.withUnsafeBufferPointer { u in
+                for row in 0..<vectorIDs.count {
+                    var dot: Float = 0
+                    let base = row * dimension
+                    for column in 0..<dimension { dot += m[base + column] * u[column] }
+                    similarities[row] = dot
+                }
+            }
+        }
+        #endif
         var best = TopK<(index: Int, similarity: Float)>(limit) { a, b in
             a.similarity != b.similarity ? a.similarity > b.similarity : a.index < b.index
         }

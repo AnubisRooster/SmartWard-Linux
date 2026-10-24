@@ -24,7 +24,9 @@ public protocol BiometricUnlocking: AnyObject {
     func acceptCurrentBiometry()
 }
 
+#if canImport(LocalAuthentication)
 extension BiometricService: BiometricUnlocking {}
+#endif
 
 // MARK: - Policy
 

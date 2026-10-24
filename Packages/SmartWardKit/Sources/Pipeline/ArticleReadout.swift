@@ -145,13 +145,7 @@ public enum ArticleReadout {
     static func pieces(of paragraph: String) -> [String] {
         let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > maxSegmentLength else { return trimmed.isEmpty ? [] : [trimmed] }
-        var sentences: [String] = []
-        trimmed.enumerateSubstrings(in: trimmed.startIndex..., options: .bySentences) { sentence, _, _, _ in
-            // A sentence comes with the space after it.
-            if let sentence = sentence?.trimmingCharacters(in: .whitespacesAndNewlines), !sentence.isEmpty {
-                sentences.append(sentence)
-            }
-        }
+        let sentences = trimmed.sentenceList
         var result: [String] = []
         var current = ""
         for sentence in sentences {

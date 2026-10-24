@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct GitHubDeviceCode: Decodable, Equatable, Sendable {
     public let deviceCode: String

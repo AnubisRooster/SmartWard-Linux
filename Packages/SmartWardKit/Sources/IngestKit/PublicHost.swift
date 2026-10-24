@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Which hosts SmartWard may reach on the strategist's say-so, or be
 /// redirected to: named hosts on the public internet, not IP addresses,

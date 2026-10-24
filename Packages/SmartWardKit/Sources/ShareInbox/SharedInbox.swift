@@ -51,10 +51,17 @@ public struct SharedInbox: Sendable {
     /// The shared container's inbox, or `nil` when the App Group isn't
     /// configured (e.g. an unsigned build).
     public static func appGroup() -> SharedInbox? {
+        #if os(Linux)
+        // No App Groups: the inbox lives in the XDG data dir.
+        let base = ProcessInfo.processInfo.environment["XDG_DATA_HOME"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share")
+        return SharedInbox(directory: base.appendingPathComponent("smartward/Inbox", isDirectory: true))
+        #else
         guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
             return nil
         }
         return SharedInbox(directory: container.appendingPathComponent("Inbox", isDirectory: true))
+        #endif
     }
 
     private var itemsDirectory: URL { directory.appendingPathComponent("Items", isDirectory: true) }

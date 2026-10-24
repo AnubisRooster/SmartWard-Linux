@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// robots.txt rules for one user agent (RFC 9309): the longest matching
 /// `Allow`/`Disallow` pattern wins, and `Allow` wins a tie. Patterns support

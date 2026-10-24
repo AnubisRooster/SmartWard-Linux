@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import KnowledgeStore
 
 /// Turns what a user (or the onboarding proposal) typed for a source into the

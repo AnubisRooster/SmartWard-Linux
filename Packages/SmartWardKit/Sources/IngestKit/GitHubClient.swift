@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// The network seam, so GitHub access is testable without a network.
 public protocol HTTPTransport: Sendable {
@@ -18,6 +21,9 @@ public struct URLSessionTransport: HTTPTransport {
     }
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        #if !canImport(Darwin)
+        return try await CappedFetch.run(request, maxBytes: maxBytes)
+        #else
         let (bytes, response) = try await URLSession.shared.bytes(for: request, delegate: RedirectPolicy.shared)
         guard let http = response as? HTTPURLResponse else {
             bytes.task.cancel()
@@ -37,6 +43,7 @@ public struct URLSessionTransport: HTTPTransport {
             }
         }
         return (data, http)
+        #endif
     }
 }
 
