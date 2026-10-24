@@ -16,10 +16,11 @@ This is a Linux fork of [SmartWard](https://github.com/AnubisRooster/SmartWard),
 | `smartward search <words>` | Keyword and semantic search over everything you've ingested. Falls back to keywords if no embedding model is available. |
 | `smartward ask <question>` | Answers from your library with numbered citations (`[R1]`), using passages found by words, meaning and one hop through the knowledge graph. |
 | `smartward digest` | What's new since the last digest, grouped by theme. Needs articles that have been linked into the graph. |
-| `smartward read [words]` | Read an article aloud with a local voice (the best match for your words, or the newest article). `--summary` reads only the summary; `--out file.wav --no-play` saves it. Needs a local speech server, see [tools/kokoro-server](tools/kokoro-server/README.md). |
+| `smartward read [words]` | Read an article aloud with a local voice (the best match for your words, or the newest article). Uses your default profile or voice; `--profile NAME`, `--voice`, `--speed` and `--summary` override it, and `--out file.wav --no-play` saves it. Needs a local speech server, see [tools/kokoro-server](tools/kokoro-server/README.md). |
+| `smartward settings` | Opens a Settings page in your browser (served on 127.0.0.1 only): pick the voice with a Listen button, set the speed, manage reading profiles, and choose the models. The same choices are available as `smartward voices`, `voice use`, `voice sample` and `profile list/set/remove/use`, and are stored in `~/.config/smartward/config.json`. |
 | `smartward status` | Library counts, the indexing backlog, and which models are available. |
 
-All commands accept `--store <file>`, `--chat-model`, `--embed-model` and `--ollama-url`.
+All commands accept `--store <file>`, `--config <file>`, `--chat-model`, `--embed-model` and `--ollama-url`; the model options override Settings.
 
 ## Requirements
 

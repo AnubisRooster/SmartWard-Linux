@@ -50,6 +50,19 @@ public struct SpeechClient: Sendable {
         return data
     }
 
+    /// The voices the server offers (`GET /v1/voices` or `/v1/audio/voices`).
+    public func voices() async throws -> [String] {
+        for path in ["v1/voices", "v1/audio/voices"] {
+            var request = URLRequest(url: baseURL.appendingPathComponent(path))
+            request.timeoutInterval = 5
+            guard let (data, response) = try? await transport.send(request), response.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let names = json["voices"] as? [String] else { continue }
+            return names.sorted()
+        }
+        throw LocalAIError.unreachable("no voice list from \(baseURL.host ?? "the speech server")")
+    }
+
     public func isReachable() async -> Bool {
         var request = URLRequest(url: baseURL.appendingPathComponent("health"))
         request.timeoutInterval = 3

@@ -34,7 +34,13 @@ final class CappedFetch: @unchecked Sendable {
         static let shared = Router()
         private let lock = NSLock()
         private var fetches: [Int: CappedFetch] = [:]
-        private(set) lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+        /// Created up front: a lazy property raced when several requests started at once.
+        private(set) var session: URLSession!
+
+        private override init() {
+            super.init()
+            session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+        }
 
         func register(_ fetch: CappedFetch, for task: URLSessionTask) {
             lock.lock(); fetches[task.taskIdentifier] = fetch; lock.unlock()
