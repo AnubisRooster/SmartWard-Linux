@@ -16,6 +16,7 @@ This is a Linux fork of [SmartWard](https://github.com/AnubisRooster/SmartWard),
 | `smartward search <words>` | Keyword and semantic search over everything you've ingested. Falls back to keywords if no embedding model is available. |
 | `smartward ask <question>` | Answers from your library with numbered citations (`[R1]`), using passages found by words, meaning and one hop through the knowledge graph. |
 | `smartward digest` | What's new since the last digest, grouped by theme. Needs articles that have been linked into the graph. |
+| `smartward read [words]` | Read an article aloud with a local voice (the best match for your words, or the newest article). `--summary` reads only the summary; `--out file.wav --no-play` saves it. Needs a local speech server, see [tools/kokoro-server](tools/kokoro-server/README.md). |
 | `smartward status` | Library counts, the indexing backlog, and which models are available. |
 
 All commands accept `--store <file>`, `--chat-model`, `--embed-model` and `--ollama-url`.

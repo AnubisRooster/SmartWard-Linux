@@ -29,6 +29,14 @@ public enum LocalAIError: LocalizedError, Equatable, Sendable {
     }
 }
 
+enum LocalAddress {
+    /// Whether `url` points at this machine, so "local" content can't be sent elsewhere.
+    static func isLoopback(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host) || host.hasSuffix(".localhost")
+    }
+}
+
 /// A client for a local Ollama server. It only ever talks to loopback
 /// addresses (D5): content that must stay on the device is sent to a model
 /// on this machine and nowhere else.
@@ -40,8 +48,7 @@ public struct OllamaClient: Sendable {
 
     public init(baseURL: URL = OllamaClient.defaultBaseURL,
                 transport: any HTTPTransport = URLSessionTransport()) throws {
-        guard let host = baseURL.host?.lowercased(),
-              ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host) || host.hasSuffix(".localhost") else {
+        guard LocalAddress.isLoopback(baseURL) else {
             throw LocalAIError.notLoopback(baseURL.host ?? baseURL.absoluteString)
         }
         self.baseURL = baseURL

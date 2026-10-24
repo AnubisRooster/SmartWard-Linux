@@ -11,7 +11,7 @@ struct SmartWardCLI: AsyncParsableCommand {
         commandName: "smartward",
         abstract: "A local-first research strategist: follow sources, search them, ask questions, get a digest.",
         discussion: "Everything runs on this machine. Models come from a local Ollama server.",
-        subcommands: [Add.self, Sources.self, Ingest.self, Status.self, Search.self, Ask.self, Digest.self])
+        subcommands: [Add.self, Sources.self, Ingest.self, Status.self, Search.self, Ask.self, Digest.self, Read.self])
 }
 
 struct Library: ParsableArguments {
@@ -168,6 +168,52 @@ extension SmartWardCLI {
                 if !cluster.projects.isEmpty { say("Projects: " + cluster.projects.map(\.name).joined(separator: ", ")) }
                 for article in cluster.articles { say("  - \(article.title) \(article.url)") }
                 say()
+            }
+        }
+    }
+
+    struct Read: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Read an article aloud with a local voice.",
+            discussion: "Picks the best search match for WORDS (or the newest article if you give none) and reads it "
+                + "through a local text-to-speech server that speaks the OpenAI /v1/audio/speech API, such as "
+                + "Kokoro-FastAPI or tools/kokoro-server in this repository. The server must be on this machine.")
+        @OptionGroup var library: Library
+        @Flag(name: .long, help: "Read only the title and the five-question summary.") var summary = false
+        @Option(name: .long, help: "Voice name (Kokoro: af_heart, af_bella, am_adam, bf_emma, …).")
+        var voice: String = SpeechClient.defaultVoice
+        @Option(name: .long, help: "Speaking speed, 1.0 is normal.") var speed: Double = 1.0
+        @Option(name: .long, help: "Speech server address; it must be on this machine.")
+        var ttsURL: String = SpeechClient.defaultBaseURL.absoluteString
+        @Option(name: .long, help: "Also save the reading to this WAV file.") var out: String?
+        @Flag(name: .long, help: "Don't play it; only save (use with --out).") var noPlay = false
+        @Argument(help: "Words to find the article by.") var words: [String] = []
+
+        @MainActor func run() async throws {
+            guard let url = URL(string: ttsURL) else { throw ValidationError("Not a URL: \(ttsURL)") }
+            if noPlay && out == nil { throw ValidationError("--no-play needs --out.") }
+            let speech = try SpeechClient(baseURL: url, voice: voice, speed: speed)
+            guard await speech.isReachable() else {
+                throw ValidationError("No speech server at \(ttsURL). See tools/kokoro-server/README.md to start one.")
+            }
+            var player: CommandAudioPlayer?
+            if !noPlay {
+                player = CommandAudioPlayer.detect()
+                if player == nil {
+                    throw ValidationError("No audio player found. Install pipewire-utils, pulseaudio-utils, alsa-utils, "
+                        + "ffmpeg or mpv, or use --out with --no-play.")
+                }
+            }
+            let result = try await library.engine().read(
+                words.joined(separator: " "), scope: summary ? .summaryOnly : .whole,
+                speech: speech, player: player, keepAudio: out != nil) { number, count, text in
+                    note("[\(number)/\(count)] \(text.prefix(90))")
+                }
+            if let out, let audio = result.audio {
+                try audio.write(to: URL(fileURLWithPath: out))
+                say("Saved \(result.segments) piece(s) of \"\(result.title)\" to \(out).")
+            } else {
+                say("Read \"\(result.title)\".")
             }
         }
     }

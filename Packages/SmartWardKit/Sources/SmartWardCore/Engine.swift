@@ -148,6 +148,7 @@ public final class SmartWardEngine {
     // MARK: Search
 
     public struct SearchResult: Equatable, Sendable {
+        public var articleID: UUID
         public var title: String
         public var source: String
         public var url: String
@@ -177,7 +178,7 @@ public final class SmartWardEngine {
             guard let article = byID[hit.articleID] else { return nil }
             let kind: String = hit.matchedBy.contains(.keyword) && hit.matchedBy.contains(.semantic)
                 ? "words + meaning" : (hit.matchedBy.contains(.semantic) ? "meaning" : "words")
-            return SearchResult(title: article.title, source: article.source?.title ?? "", url: article.canonicalURL,
+            return SearchResult(articleID: article.id, title: article.title, source: article.source?.title ?? "", url: article.canonicalURL,
                                 snippet: hit.snippet, matchedBy: kind, score: hit.score)
         }
     }
