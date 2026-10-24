@@ -34,6 +34,7 @@ struct SettingsView: View {
                 GitHubSettingsSection()
                 ActionApprovalSettingsSection()
                 VoiceSettingsSection()
+                ReadAloudSettingsSection()
                 VoiceNavigationSettingsSection()
                 BriefingSettingsSection()
                 SecuritySettingsSection()

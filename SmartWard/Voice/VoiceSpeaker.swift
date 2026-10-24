@@ -37,13 +37,19 @@ final class VoiceSpeaker {
     }
 
     func say(_ text: String) {
+        let config = VoiceSettings.current
+        say(text, voiceID: config.voiceID, rate: config.ttsRate)
+    }
+
+    /// With a given voice and rate: Settings uses it to let you hear a
+    /// reading profile before you pick it.
+    func say(_ text: String, voiceID: String, rate: Float) {
         guard !text.isEmpty else { return }
         AppAudio.shared.configure(speaking: true)
-        let config = VoiceSettings.current
         let utterance = AVSpeechUtterance(string: text)
-        utterance.rate = config.ttsRate
-        utterance.pitchMultiplier = config.ttsPitch
-        utterance.voice = VoiceSettings.voice(for: config.voiceID)
+        utterance.rate = rate
+        utterance.pitchMultiplier = VoiceSettings.current.ttsPitch
+        utterance.voice = VoiceSettings.voice(for: voiceID)
         lastSpoken = text
         pending = true
         synthesizer.stopSpeaking(at: .immediate)

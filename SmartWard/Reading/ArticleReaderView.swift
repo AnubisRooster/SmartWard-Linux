@@ -116,7 +116,8 @@ struct ArticleReaderView: View {
                     } label: {
                         Label("Read aloud", systemImage: "speaker.wave.2")
                     } primaryAction: {
-                        startReading(.whole)
+                        // A reading profile can make the speaker button read just the summary.
+                        startReading(VoiceSettings.readingScope)
                     }
                 }
                 Button(article.isStarred ? "Unstar" : "Star",

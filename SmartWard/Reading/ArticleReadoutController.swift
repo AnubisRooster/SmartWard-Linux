@@ -250,10 +250,12 @@ final class ArticleReadoutController {
         guard playback.status == .playing, let segment = playback.current else { return }
         followBriefingItem()
         let config = VoiceSettings.current
+        // The active reading profile's voice and rate, if there is one.
+        let reading = VoiceSettings.reading
         let utterance = AVSpeechUtterance(string: segment.text)
-        utterance.rate = config.ttsRate
+        utterance.rate = reading.rate
         utterance.pitchMultiplier = config.ttsPitch
-        utterance.voice = VoiceSettings.voice(for: config.voiceID)
+        utterance.voice = VoiceSettings.voice(for: reading.voiceID)
         // The old utterance stays referenced until this point, so the new
         // one can't share its identity with a callback still on its way.
         currentUtterance = utterance

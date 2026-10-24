@@ -10,6 +10,8 @@ enum VoiceSettings {
     static let silenceIntervalKey = "voice.silenceInterval"
     static let ttsRateKey = "voice.ttsRate"
     static let voiceIDKey = "voice.voiceID"
+    /// `ReadAloudProfiles` as JSON: Settings → Read aloud.
+    static let profilesKey = "voice.readAloudProfiles"
 
     /// VoiceLoopKit's own defaults, so Settings and the controller agree.
     static let defaults = VoiceLoopConfig()
@@ -31,10 +33,43 @@ enum VoiceSettings {
         return AVSpeechSynthesisVoice(identifier: identifier) ?? SpeechService.bestAvailableVoice()
     }
 
+    /// English voices, best quality first (Premium, then Enhanced, then Standard).
     static func englishVoices() -> [AVSpeechSynthesisVoice] {
         AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.hasPrefix("en") }
-            .sorted { $0.name < $1.name }
+            .sorted { a, b in
+                a.quality.rawValue != b.quality.rawValue ? a.quality.rawValue > b.quality.rawValue : a.name < b.name
+            }
+    }
+
+    /// "Daniel · English (United Kingdom) · Enhanced": the quality is what
+    /// separates a natural voice from a robotic one.
+    static func label(for voice: AVSpeechSynthesisVoice) -> String {
+        let quality: String
+        switch voice.quality {
+        case .premium: quality = "Premium"
+        case .enhanced: quality = "Enhanced"
+        default: quality = "Standard"
+        }
+        let region = Locale.current.localizedString(forIdentifier: voice.language) ?? voice.language
+        return "\(voice.name) · \(region) · \(quality)"
+    }
+
+    static var readAloudProfiles: ReadAloudProfiles {
+        ReadAloudProfiles.decode(UserDefaults.standard.string(forKey: profilesKey) ?? "")
+    }
+
+    /// The voice and rate for reading an article aloud: the active reading
+    /// profile's, or the ones under Voice conversation when none is active.
+    static var reading: (voiceID: String, rate: Float) {
+        if let profile = readAloudProfiles.active { return (profile.voiceID, Float(profile.rate)) }
+        let config = current
+        return (config.voiceID, config.ttsRate)
+    }
+
+    /// What the speaker button reads: the active profile's choice, else the whole article.
+    static var readingScope: ReadoutScope {
+        readAloudProfiles.active?.summaryOnly == true ? .summaryOnly : .whole
     }
 }
 
@@ -55,7 +90,7 @@ struct VoiceSettingsSection: View {
             Picker("Voice", selection: $voiceID) {
                 Text("Automatic").tag("")
                 ForEach(voices, id: \.identifier) { voice in
-                    Text(voice.name).tag(voice.identifier)
+                    Text(VoiceSettings.label(for: voice)).tag(voice.identifier)
                 }
             }
             HStack {
