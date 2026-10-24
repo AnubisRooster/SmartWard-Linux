@@ -44,6 +44,7 @@ Local-first iOS research strategist. The source of truth for requirements, desig
 ## Checks
 
 - Package tests run on the iOS Simulator, because OnDeviceKit declares iOS only: `cd Packages/SmartWardKit && xcodebuild test -scheme SmartWardKit-Package -destination 'platform=iOS Simulator,OS=<latest>,name=<iPhone NN Pro>'`
+- Linux (the `smartward` command-line tool and `SmartWardCore`): `cd Packages/SmartWardKit && swift test` with the Swift 6 toolchain, `libsqlite3-dev` and `pkg-config` installed. Off Apple platforms SwiftData is replaced by `Sources/LinuxSwiftData`, a module also named `SwiftData` (macros in `SwiftDataMacros`, SQLite storage), so shared code keeps `import SwiftData`; give a model a new relationship or attribute option by teaching that module first. Local models come from Ollama through `Pipeline/Local` (loopback only; they count as the on-device tier). Tests that need a real Ollama are skipped unless `SMARTWARD_OLLAMA=1`. While bringing up a target, `SMARTWARD_SKIP=Target,TargetTests` drops it from the manifest. Linux has no Keychain: keys and the GitHub token live in 0600 files under `$XDG_DATA_HOME`.
 - `xcodegen generate && xcodebuild build -project SmartWard.xcodeproj -scheme SmartWard -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO`
 - CI (`.github/workflows/ci.yml`) runs both on `macos-latest` with the latest stable Xcode.
 

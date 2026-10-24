@@ -37,4 +37,10 @@ public enum KnowledgeSchema {
                                                cloudKitDatabase: .none)
         return try ModelContainer(for: schema, configurations: [configuration])
     }
+    /// A container backed by the store file at `storeURL` (the Linux CLI and
+    /// tests use this; the app uses the default location).
+    public static func makeContainer(storeURL: URL) throws -> ModelContainer {
+        let configuration = ModelConfiguration(schema: schema, url: storeURL, cloudKitDatabase: .none)
+        return try ModelContainer(for: schema, configurations: [configuration])
+    }
 }
