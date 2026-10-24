@@ -22,6 +22,10 @@ is also published) and `voices-v1.0.bin` (about 27 MB).
 python server.py --model kokoro-v1.0.onnx --voices voices-v1.0.bin
 ```
 
+The server uses your distribution's espeak-ng (`libespeak-ng1` and
+`espeak-ng-data`, installed with most desktop Ubuntu setups). The copy bundled
+with the Python packages aborted on the machine this was tried on.
+
 ## Use it
 
 ```bash

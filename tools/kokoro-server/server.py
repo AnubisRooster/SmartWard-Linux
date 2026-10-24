@@ -8,14 +8,40 @@ by Kokoro (82M parameters, Apache-2.0) through kokoro-onnx. It listens on
     python server.py --model kokoro-v1.0.onnx --voices voices-v1.0.bin
 """
 import argparse
+import glob
 import io
 import json
+import os
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
 
 import numpy as np
-from kokoro_onnx import Kokoro
+
+
+def prefer_system_espeak():
+    """Use the distribution's espeak-ng when it is installed.
+
+    The espeak-ng build bundled with `espeakng-loader` aborts here with
+    "Error processing file '.../phontab'" even though its data is present, so
+    the system library (package libespeak-ng1 with espeak-ng-data) is more
+    reliable. Honors PHONEMIZER_ESPEAK_LIBRARY if you set it yourself.
+    """
+    if os.environ.get("PHONEMIZER_ESPEAK_LIBRARY"):
+        return
+    for pattern in ("/usr/lib/*/libespeak-ng.so.1", "/usr/lib64/libespeak-ng.so.1", "/usr/lib/libespeak-ng.so.1"):
+        libraries = glob.glob(pattern)
+        if not libraries:
+            continue
+        data = os.path.join(os.path.dirname(libraries[0]), "espeak-ng-data")
+        if os.path.isdir(data):
+            os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = libraries[0]
+            os.environ.setdefault("PHONEMIZER_ESPEAK_DATA_PATH", data)
+            return
+
+
+prefer_system_espeak()
+from kokoro_onnx import Kokoro  # noqa: E402  (after the espeak environment is set)
 
 
 def to_wav(samples: np.ndarray, rate: int) -> bytes:
