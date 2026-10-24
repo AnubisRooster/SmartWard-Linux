@@ -2,23 +2,25 @@
 
 _Auto-generated from the GitNexus knowledge graph on every push to `main`. Do not edit by hand._
 
+>  *Architecture drift:* worst hub out-degree grew 51% since the last tracked push (259  392). Consider refactoring the top hub before it compounds.
+
 ## Graph size
 
 | nodes | edges |
 | ----- | ----- |
-| 8576 | 49045 |
+| 12384 | 122959 |
 
 ## God nodes (highest out-degree, tests excluded)
 
 | symbol | file | outDegree |
 | --- | --- | --- |
-| AnalyzerCommandRecognizer.swift | SmartWard/Voice/AnalyzerCommandRecognizer.swift | 259 |
-| Extraction.swift | Packages/SmartWardKit/Sources/Pipeline/Extraction.swift | 242 |
-| VoiceCommandController.swift | SmartWard/Voice/VoiceCommandController.swift | 240 |
-| DigestBuilder.swift | Packages/SmartWardKit/Sources/Pipeline/DigestBuilder.swift | 238 |
-| GraphIndexer.swift | Packages/SmartWardKit/Sources/Pipeline/GraphIndexer.swift | 237 |
-| GraphEditing.swift | Packages/SmartWardKit/Sources/Pipeline/GraphEditing.swift | 237 |
-| HybridSearch.swift | Packages/SmartWardKit/Sources/Pipeline/HybridSearch.swift | 237 |
-| PipelineRunner.swift | Packages/SmartWardKit/Sources/Pipeline/PipelineRunner.swift | 226 |
-| VoiceCommands.swift | Packages/SmartWardKit/Sources/Pipeline/VoiceCommands.swift | 223 |
-| LibraryArchive.swift | Packages/SmartWardKit/Sources/KnowledgeStore/LibraryArchive.swift | 215 |
+| AnalyzerCommandRecognizer.swift | SmartWard/Voice/AnalyzerCommandRecognizer.swift | 392 |
+| Extraction.swift | Packages/SmartWardKit/Sources/Pipeline/Extraction.swift | 375 |
+| VoiceCommandController.swift | SmartWard/Voice/VoiceCommandController.swift | 373 |
+| HybridSearch.swift | Packages/SmartWardKit/Sources/Pipeline/HybridSearch.swift | 372 |
+| DigestBuilder.swift | Packages/SmartWardKit/Sources/Pipeline/DigestBuilder.swift | 371 |
+| GraphIndexer.swift | Packages/SmartWardKit/Sources/Pipeline/GraphIndexer.swift | 370 |
+| GraphEditing.swift | Packages/SmartWardKit/Sources/Pipeline/GraphEditing.swift | 370 |
+| PipelineRunner.swift | Packages/SmartWardKit/Sources/Pipeline/PipelineRunner.swift | 359 |
+| VoiceCommands.swift | Packages/SmartWardKit/Sources/Pipeline/VoiceCommands.swift | 356 |
+| Onboarding.swift | Packages/SmartWardKit/Sources/StrategistCore/Onboarding.swift | 348 |
