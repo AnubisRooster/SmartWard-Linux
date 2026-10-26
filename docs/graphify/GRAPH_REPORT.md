@@ -1,7 +1,7 @@
-# Graph Report - SmartWard-Linux  (2026-10-24)
+# Graph Report - SmartWard-Linux  (2026-10-26)
 
 ## Corpus Check
-- Large corpus: 372 files · ~826,840 words. Semantic extraction will be expensive (many Claude tokens). Consider running on a subfolder.
+- Large corpus: 372 files · ~830,856 words. Semantic extraction will be expensive (many Claude tokens). Consider running on a subfolder.
 
 ## Summary
 - 5916 nodes · 16341 edges · 272 communities (258 shown, 14 thin omitted)
